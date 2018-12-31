@@ -42,122 +42,122 @@ public class Forwarder {
         udpsocket.connect(new InetSocketAddress(dnsServers[0],53));
         udpsocket.register(selector, SelectionKey.OP_READ);
 
-        SelectionKey key = null;
+        SelectionKey key;
         ByteBuffer messagebuffer = ByteBuffer.allocate(size);
-        while (true) {
-            selector.select();
-            Set<SelectionKey> selectedKeys = selector.selectedKeys();
-            Iterator<SelectionKey> iterator = selectedKeys.iterator();
-            while (iterator.hasNext()) {
-                key = (SelectionKey) iterator.next();
-                iterator.remove();
-                if (key.isValid()) {
-                    if (key.isAcceptable()) {
-                        SocketChannel sc = ssChannel.accept();
-                        sc.configureBlocking(false);
-                        sc.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE | SelectionKey.OP_CONNECT);
-                        Meta info = new Meta(size);
-                        info.state = ACCEPTED;
-                        information.put(sc, info);
-                    }
-                    if (key.isConnectable()) {
-                        ((SocketChannel) key.channel()).finishConnect();
-                    }
-                    if (key.isReadable()) {
-                        boolean is_dns = !(key.channel() instanceof SocketChannel);
-                        if (!is_dns) {
-                            Meta info = information.get((SocketChannel) key.channel());
-                            if (info == null){
-                                info = new Meta(size);
-                                info.state = ACCEPTED;
-                                information.put((SocketChannel) key.channel(), info);
-                            }
-                            SocketChannel sc = (SocketChannel) key.channel();
-                            int res = -1;
-                            boolean correct;
-                            if ((info.state == ACCEPTED)||(info.state == CONNECTED)) {
-                                res = sc.read(messagebuffer);
-                                if (res < 0) {
-                                    information.remove((SocketChannel) key.channel());
-//                                    System.out.println(connections.get(sc).toString() + "res < 1");
-                                    close(key);
+        try {
+            while (true) {
+                selector.select();
+                Set<SelectionKey> selectedKeys = selector.selectedKeys();
+                Iterator<SelectionKey> iterator = selectedKeys.iterator();
+                while (iterator.hasNext()) {
+                    key = (SelectionKey) iterator.next();
+                    iterator.remove();
+                    if (key.isValid()) {
+                        if (key.isAcceptable()) {
+                            SocketChannel sc = ssChannel.accept();
+                            sc.configureBlocking(false);
+                            sc.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE | SelectionKey.OP_CONNECT);
+                            Meta info = new Meta(size);
+                            info.state = ACCEPTED;
+                            information.put(sc, info);
+                        }
+                        if (key.isConnectable()) {
+                            ((SocketChannel) key.channel()).finishConnect();
+                        }
+                        if (key.isReadable()) {
+                            boolean is_dns = !(key.channel() instanceof SocketChannel);
+                            if (!is_dns) {
+                                Meta info = information.get((SocketChannel) key.channel());
+                                if (info == null) {
+                                    info = new Meta(size);
+                                    info.state = ACCEPTED;
+                                    information.put((SocketChannel) key.channel(), info);
                                 }
-                                correct = messageParser.checkIfCorrect(messagebuffer, info.state);
+                                SocketChannel sc = (SocketChannel) key.channel();
+                                int res = -1;
+                                boolean correct;
+                                if ((info.state == ACCEPTED) || (info.state == CONNECTED)) {
+                                    res = sc.read(messagebuffer);
+                                    if (res < 0) {
+                                        information.remove((SocketChannel) key.channel());
+                                        close(key);
+                                    }
+                                    correct = messageParser.checkIfCorrect(messagebuffer, info.state);
+                                    if (correct) {
+                                        if (info.state == ACCEPTED) {
+                                            ByteBuffer outBuffer = messageParser.makeAcceptionAnswer();
+                                            sc.write(ByteBuffer.wrap(outBuffer.array(), 0, 2));
+                                            info.state = CONNECTED;
+                                        } else if (info.state == CONNECTED) {
+                                            try {
+                                                InetAddress address = messageParser.getAddress(messagebuffer);
+                                                int connection_port = messageParser.getPort(messagebuffer, res);
+                                                if (connect(address, connection_port, sc, key))
+                                                    info.state = CONNECTION;
+                                            } catch (DomainException e) {
+                                                Name name = org.xbill.DNS.Name.fromString(messageParser.getDomain(messagebuffer), Name.root);
+                                                Record rec = Record.newRecord(name, Type.A, DClass.IN);
+                                                Message dns_message = Message.newQuery(rec);
+                                                udpsocket.write(ByteBuffer.wrap(dns_message.toWire()));
+                                                int port = messageParser.getPort(messagebuffer, res);
+                                                dnslist.put(dns_message.getHeader().getID(), new MyConnection(port, sc));
+                                            }
+                                        }
+                                        messagebuffer.clear();
+                                    }
+                                } else if (info.state == CONNECTION) {
+//                                System.out.println("Connection!");
+                                    SocketChannel connection = connections.get(sc);
 
-//                                messagebuffer.rewind();
-                                if (correct) {
-                                    if (info.state == ACCEPTED) {
-                                        ByteBuffer outBuffer = messageParser.makeAcceptionAnswer();
-                                        sc.write(ByteBuffer.wrap(outBuffer.array(), 0, 2));
-                                        info.state = CONNECTED;
-                                    } else if (info.state == CONNECTED) {
+                                System.out.println("CONNECTION (SOURCE) : " +sc.toString() + sc.isConnected());
+                                System.out.println("CONNECTION (DEST) : " +connection.toString() + connection.isConnected());
+                                    if (connection.isConnected()) {
+                                        int amount;
                                         try {
-                                            InetAddress address = messageParser.getAddress(messagebuffer);
-//                                            messagebuffer.rewind();
-                                            int connection_port = messageParser.getPort(messagebuffer, res);
-                                            if (connect(address, connection_port, sc, key))
-                                                info.state = CONNECTION;
-                                        } catch (DomainException e) {
-                                            Name name = org.xbill.DNS.Name.fromString(messageParser.getDomain(messagebuffer), Name.root);
-                                            Record rec = Record.newRecord(name, Type.A, DClass.IN);
-                                            Message dns_message = Message.newQuery(rec);
-                                            udpsocket.write(ByteBuffer.wrap(dns_message.toWire()));
-                                            int port = messageParser.getPort(messagebuffer, res);
-//                                            System.out.println("ID TO DNS "+dns_message.getHeader().getID());
-                                            dnslist.put(dns_message.getHeader().getID(), new MyConnection(port, sc));
+                                            amount = sc.read(messagebuffer);
+                                            if (amount == -1) {
+                                                close(key);
+                                            } else {
+                                            System.out.println(amount);
+                                            System.out.println(Arrays.toString(messagebuffer.array()));
+                                                connection.write(ByteBuffer.wrap(messagebuffer.array(), 0, amount));
+                                            }
+                                        } catch (IOException e) {
+                                            e.printStackTrace();
+                                            System.out.println("Going to close the connection");
+                                            close(key);
                                         }
                                     }
                                     messagebuffer.clear();
                                 }
-                            }
-                            else if (info.state == CONNECTION){
-                                System.out.println("Connection!");
-                                SocketChannel connection = connections.get(sc);
-
-                                System.out.println("CONNECTION (SOURCE) : " +sc.toString() + sc.isConnected());
-                                System.out.println("CONNECTION (DEST) : " +connection.toString() + connection.isConnected());
-                                if (connection.isConnected()) {
-                                    int amount = sc.read(messagebuffer);
-                                    if (amount == -1) {
-                                        close(key);
+                            } else {
+                                ByteBuffer buffer = ByteBuffer.allocate(1024);
+                                int len = udpsocket.read(buffer);
+                                if (len <= 0) continue;
+                                Message msg = new Message(buffer.array());
+                                Record[] recs = msg.getSectionArray(1);
+                                for (Record rec : recs) {
+                                    if (rec instanceof ARecord) {
+                                        ARecord arec = (ARecord) rec;
+                                        InetAddress adr = arec.getAddress();
+                                        int id = msg.getHeader().getID();
+                                        MyConnection myConnection = dnslist.get(id);
+                                        int port = myConnection.port;
+                                        if (connect(adr, port, dnslist.get(id).socketChannel, key)) {
+                                            information.get(dnslist.get(id).socketChannel).state = CONNECTION;
+                                        }
+                                        dnslist.remove(id);
+                                        break;
                                     }
-                                    else {
-                                        System.out.println(amount);
-                                        System.out.println(Arrays.toString(messagebuffer.array()));
-                                        connection.write(ByteBuffer.wrap(messagebuffer.array(), 0, amount));
-                                    }
-                                }
-                                messagebuffer.clear();
-                            }
-                        }
-                        else {
-                            ByteBuffer buffer = ByteBuffer.allocate(1024);
-                            int len = udpsocket.read(buffer);
-                            if (len <= 0) continue;
-                            Message msg = new Message(buffer.array());
-                            Record[] recs = msg.getSectionArray(1);
-                            for (Record rec : recs) {
-                                if (rec instanceof ARecord) {
-                                    ARecord arec = (ARecord)rec;
-                                    InetAddress adr = arec.getAddress();
-                                    int id = msg.getHeader().getID();
-//                                    System.out.println("ID FROM DNS " + id);
-                                    MyConnection myConnection = dnslist.get(id);
-                                    int port = myConnection.port;
-                                    if (connect(adr, port, dnslist.get(id).socketChannel, key)) {
-                                        information.get(dnslist.get(id).socketChannel).state = CONNECTION;
-                                    }
-                                    dnslist.remove(id);
-                                    break;
                                 }
                             }
                         }
-                    }
-                    if (key.isValid() && key.isWritable()){
-
                     }
                 }
             }
+        }catch (Exception e){
+            ssChannel.close();
+            udpsocket.close();
         }
     }
 
@@ -173,12 +173,13 @@ public class Forwarder {
 
     private boolean connect(InetAddress address, int connection_port, SocketChannel sc, SelectionKey key) throws IOException {
         SocketChannel connection = SocketChannel.open(new InetSocketAddress(address, connection_port));
-//        connection.connect();
         ByteBuffer bb = messageParser.makeConnectionAnswer(port, connection.isConnected());
-        System.out.println("writing "+ Arrays.toString(bb.array())+ " to "+sc.toString());
-        sc.write(ByteBuffer.wrap(bb.array(), 0, 10));
-        if (!connection.isConnected())
+//        System.out.println("writing "+ Arrays.toString(bb.array())+ " to "+sc.toString());
+        if (!connection.isConnected()) {
             close(key);
+            return connection.isConnected();
+        }
+        sc.write(ByteBuffer.wrap(bb.array(), 0, 10));
         connection.configureBlocking(false);
         connection.register(selector, SelectionKey.OP_READ|SelectionKey.OP_CONNECT);
         connections.put(sc, connection);
