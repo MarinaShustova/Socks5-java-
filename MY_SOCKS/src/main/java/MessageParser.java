@@ -24,7 +24,7 @@ public class MessageParser {
                 return conclusion;
             }
             else {
-                int num_methods = (int)msg[1];
+                int num_methods = message.get(1);//(int)msg[1];
                 boolean found = false;
                 for (int i = 2; i<num_methods+2; ++i){
                     if (msg[i] == MY_AUTH){
