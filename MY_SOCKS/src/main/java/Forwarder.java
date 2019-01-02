@@ -31,20 +31,28 @@ public class Forwarder {
 
         selector = Selector.open();
 
-        ServerSocketChannel ssChannel = ServerSocketChannel.open();
-        ssChannel.configureBlocking(false);
-        ssChannel.socket().bind(new InetSocketAddress("localhost", port));
-        ssChannel.register(selector, SelectionKey.OP_ACCEPT);
-
+//        ServerSocketChannel ssChannel = ServerSocketChannel.open();
+//        ssChannel.configureBlocking(false);
+//        ssChannel.socket().bind(new InetSocketAddress("localhost", port));
+//        ssChannel.register(selector, SelectionKey.OP_ACCEPT);
+//
         String dnsServers[] = ResolverConfig.getCurrentConfig().servers();
-        udpsocket = DatagramChannel.open();
-        udpsocket.configureBlocking(false);
-        udpsocket.connect(new InetSocketAddress(dnsServers[0],53));
-        udpsocket.register(selector, SelectionKey.OP_READ);
+//        udpsocket = DatagramChannel.open();
+//        udpsocket.configureBlocking(false);
+//        udpsocket.connect(new InetSocketAddress(dnsServers[0],53));
+//        udpsocket.register(selector, SelectionKey.OP_READ);
 
         SelectionKey key;
         ByteBuffer messagebuffer = ByteBuffer.allocate(size);
-        try {
+        try (ServerSocketChannel ssChannel = ServerSocketChannel.open();
+        DatagramChannel data = DatagramChannel.open()){
+            ssChannel.configureBlocking(false);
+            ssChannel.socket().bind(new InetSocketAddress("localhost", port));
+            ssChannel.register(selector, SelectionKey.OP_ACCEPT);
+            udpsocket = data;
+            udpsocket.configureBlocking(false);
+            udpsocket.connect(new InetSocketAddress(dnsServers[0],53));
+            udpsocket.register(selector, SelectionKey.OP_READ);
             while (true) {
                 selector.select();
                 Set<SelectionKey> selectedKeys = selector.selectedKeys();
@@ -77,7 +85,12 @@ public class Forwarder {
                                 int res = -1;
                                 boolean correct;
                                 if ((info.state == ACCEPTED) || (info.state == CONNECTED)) {
-                                    res = sc.read(messagebuffer);
+                                    try {
+                                        res = sc.read(messagebuffer);
+                                    }catch (IOException e){
+                                        e.printStackTrace();
+                                        close(key);
+                                    }
                                     if (res < 0) {
                                         information.remove((SocketChannel) key.channel());
                                         close(key);
@@ -156,8 +169,9 @@ public class Forwarder {
                 }
             }
         }catch (Exception e){
-            ssChannel.close();
-            udpsocket.close();
+            e.printStackTrace();
+//            ssChannel.close();
+//            udpsocket.close();
         }
     }
 
@@ -179,7 +193,12 @@ public class Forwarder {
             close(key);
             return connection.isConnected();
         }
-        sc.write(ByteBuffer.wrap(bb.array(), 0, 10));
+        try {
+            sc.write(ByteBuffer.wrap(bb.array(), 0, 10));
+        }catch (ClosedChannelException e){
+            e.printStackTrace();
+            return false;
+        }
         connection.configureBlocking(false);
         connection.register(selector, SelectionKey.OP_READ|SelectionKey.OP_CONNECT);
         connections.put(sc, connection);
