@@ -16,7 +16,7 @@ public class Forwarder {
     private int ACCEPTED = 0;
     private int CONNECTED = 1;
     private int CONNECTION = 2;
-    private DatagramChannel udpsocket;
+//    private DatagramChannel udpsocket;
     private Map<SocketChannel, SocketChannel> connections = new HashMap<>();
     private Map<Integer, MyConnection> dnslist = new HashMap<>();
     private Map<SocketChannel, Meta> information = new HashMap<>();
@@ -45,11 +45,11 @@ public class Forwarder {
         SelectionKey key;
         ByteBuffer messagebuffer = ByteBuffer.allocate(size);
         try (ServerSocketChannel ssChannel = ServerSocketChannel.open();
-        DatagramChannel data = DatagramChannel.open()){
+        DatagramChannel udpsocket = DatagramChannel.open()){
             ssChannel.configureBlocking(false);
             ssChannel.socket().bind(new InetSocketAddress("localhost", port));
             ssChannel.register(selector, SelectionKey.OP_ACCEPT);
-            udpsocket = data;
+//            udpsocket = data;
             udpsocket.configureBlocking(false);
             udpsocket.connect(new InetSocketAddress(dnsServers[0],53));
             udpsocket.register(selector, SelectionKey.OP_READ);
@@ -95,28 +95,30 @@ public class Forwarder {
                                         information.remove((SocketChannel) key.channel());
                                         close(key);
                                     }
-                                    correct = messageParser.checkIfCorrect(messagebuffer, info.state);
-                                    if (correct) {
-                                        if (info.state == ACCEPTED) {
-                                            ByteBuffer outBuffer = messageParser.makeAcceptionAnswer();
-                                            sc.write(ByteBuffer.wrap(outBuffer.array(), 0, 2));
-                                            info.state = CONNECTED;
-                                        } else if (info.state == CONNECTED) {
-                                            try {
-                                                InetAddress address = messageParser.getAddress(messagebuffer);
-                                                int connection_port = messageParser.getPort(messagebuffer, res);
-                                                if (connect(address, connection_port, sc, key))
-                                                    info.state = CONNECTION;
-                                            } catch (DomainException e) {
-                                                Name name = org.xbill.DNS.Name.fromString(messageParser.getDomain(messagebuffer), Name.root);
-                                                Record rec = Record.newRecord(name, Type.A, DClass.IN);
-                                                Message dns_message = Message.newQuery(rec);
-                                                udpsocket.write(ByteBuffer.wrap(dns_message.toWire()));
-                                                int port = messageParser.getPort(messagebuffer, res);
-                                                dnslist.put(dns_message.getHeader().getID(), new MyConnection(port, sc));
+                                    else {
+                                        correct = messageParser.checkIfCorrect(messagebuffer, info.state);
+                                        if (correct) {
+                                            if (info.state == ACCEPTED) {
+                                                ByteBuffer outBuffer = messageParser.makeAcceptionAnswer();
+                                                sc.write(ByteBuffer.wrap(outBuffer.array(), 0, 2));
+                                                info.state = CONNECTED;
+                                            } else if (info.state == CONNECTED) {
+                                                try {
+                                                    InetAddress address = messageParser.getAddress(messagebuffer);
+                                                    int connection_port = messageParser.getPort(messagebuffer, res);
+                                                    if (connect(address, connection_port, sc, key))
+                                                        info.state = CONNECTION;
+                                                } catch (DomainException e) {
+                                                    Name name = org.xbill.DNS.Name.fromString(messageParser.getDomain(messagebuffer), Name.root);
+                                                    Record rec = Record.newRecord(name, Type.A, DClass.IN);
+                                                    Message dns_message = Message.newQuery(rec);
+                                                    udpsocket.write(ByteBuffer.wrap(dns_message.toWire()));
+                                                    int port = messageParser.getPort(messagebuffer, res);
+                                                    dnslist.put(dns_message.getHeader().getID(), new MyConnection(port, sc));
+                                                }
                                             }
+                                            messagebuffer.clear();
                                         }
-                                        messagebuffer.clear();
                                     }
                                 } else if (info.state == CONNECTION) {
 //                                System.out.println("Connection!");

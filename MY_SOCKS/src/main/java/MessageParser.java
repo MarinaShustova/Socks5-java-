@@ -71,6 +71,7 @@ public class MessageParser {
     public int getPort(ByteBuffer message, int len){
         byte[] msg = message.array();
         int dest_port = (((0xFF & msg[len-2]) << 8) + (0xFF & msg[len-1]));
+        System.out.println(dest_port);
         return dest_port;
     }
 
